@@ -53,6 +53,10 @@ try {
   }
   await noSplash()
   const shot = (n) => win.screenshot({ path: path.join(OUT, `${n}.png`) })
+  if (process.platform !== 'darwin') {
+    const frame = await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; return { full: w.isFullScreen(), max: w.isMaximized() } })
+    check(!frame.full && frame.max, `the window opens maximised, not full screen (${JSON.stringify(frame)})`)
+  }
 
   await win.evaluate(() => window.dispatchEvent(new CustomEvent('wos:open-rail', { detail: { rail: 'connectors' } })))
   const row = win.locator('[data-testid="connection-row"]').filter({ hasText: 'BOB skills' }).first()
