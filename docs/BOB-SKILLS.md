@@ -12,7 +12,7 @@ Open **Connectors**, choose **BOB skills → Set up**, enter the server address 
 
 | Server | Address | Sign-in |
 |---|---|---|
-| The hosted BOB server | its `https://…/mcp` address (in claude.ai under Settings → Connectors → BOB skills) | Whatever the server asks for |
+| The hosted BOB server | its `https://…/mcp` address (in claude.ai under Settings → Connectors → BOB skills) | None |
 | A skills server on this computer | `http://127.0.0.1:3939/mcp`, for `skills-mcp --lib bob=<pack> --http 3939` | None |
 
 Connecting sends the server an MCP `initialize` request:
