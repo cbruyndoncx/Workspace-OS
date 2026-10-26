@@ -1,0 +1,107 @@
+name: BOB skills (macOS + Linux)
+
+# The bob-skills branch (docs/BOB-SKILLS.md) on the two platforms the Windows
+# workflow does not cover: typecheck, unit tests, a packaged test app, and the
+# BOB skills connector driven on it against a skills server started here.
+# The macOS app is built without the LibreOffice.app a release bundles (it
+# comes from a local engine build), so documents do not render in it.
+
+on:
+  push:
+    branches: [bob-skills]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test -- --reporter=dot --exclude "**/*.eval.test.ts" 2>&1 | tee unit-tests.log; exit ${PIPESTATUS[0]}
+
+      - name: Build the engine host
+        run: |
+          LOK_HEADER_REF=libreoffice-24.2.7.2 bash scripts/lok/fetch-headers.sh
+          bash scripts/lok/build-host.sh
+
+      - name: Native modules for Electron
+        run: npx electron-rebuild -f -w better-sqlite3,node-pty
+
+      - name: Build app
+        run: npm run build
+
+      - name: Package a test app
+        run: |
+          node scripts/ci-builder-config.mjs "$RUNNER_TEMP/builder.json"
+          if [ "$RUNNER_OS" = macOS ]; then
+            CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dir --config "$RUNNER_TEMP/builder.json" --publish never
+            APP_EXE="$(find release -path '*.app/Contents/MacOS/*' -type f -perm -u+x | head -1)"
+          else
+            npx electron-builder --linux dir --config "$RUNNER_TEMP/builder.json" --publish never
+            APP_EXE="$PWD/release/linux-unpacked/workspace-os"
+          fi
+          echo "APP_EXE=$APP_EXE" >> "$GITHUB_ENV"
+          ls -la "$APP_EXE"
+
+      - name: Start a skills server (fixture BOB library, no sign-in)
+        run: |
+          nohup npx -y github:cbruyndoncx/ThirdBrain-skills-mcp --lib bob="$PWD/e2e/fixtures/bob-skills" --http 3939 > "$RUNNER_TEMP/skills-mcp.log" 2>&1 &
+          for i in $(seq 1 90); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3939/mcp \
+              -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' || true)
+            [ "$code" = 200 ] && { echo "skills server up after ${i}s"; exit 0; }
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/skills-mcp.log"; exit 1
+
+      - name: Install Playwright (Electron driver)
+        run: npx playwright --version
+
+      - name: "E2E: BOB skills connector on the packaged app"
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq xvfb > /dev/null
+            xvfb-run -a node e2e/bob-connector.mjs "$APP_EXE"
+          else
+            node e2e/bob-connector.mjs "$APP_EXE"
+          fi
+
+      - name: Zip the macOS test app
+        if: runner.os == 'macOS'
+        run: |
+          APP_DIR="$(dirname "$(dirname "$(dirname "$APP_EXE")")")"
+          ditto -c -k --keepParent "$APP_DIR" "$RUNNER_TEMP/Workspace-OS-bob-skills-macos-arm64-unsigned.zip"
+
+      - name: Upload logs, screenshots and the macOS test app
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bob-skills-${{ runner.os }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            unit-tests.log
+            e2e/shots-bob-connector/*.png
+            ${{ runner.temp }}/skills-mcp.log
+            ${{ runner.temp }}/Workspace-OS-bob-skills-macos-arm64-unsigned.zip

@@ -69,7 +69,8 @@ run bare as the first word of the command) and these instructions:
 
 The permission is broader than the instructions: `uv run` can run any Python file. Leave the switch
 off if a chat may read pages or files you do not trust. The switch is turned off again when you
-connect to a different address. `uv` must be installed (`winget install --id astral-sh.uv` on Windows).
+connect to a different address. `uv` must be installed: `winget install --id astral-sh.uv` on Windows,
+`brew install uv` on macOS, or `curl -LsSf https://astral.sh/uv/install.sh | sh` on macOS and Linux.
 
 The switch applies to Claude chats. Codex runs keep their own sandbox rules.
 
@@ -93,3 +94,4 @@ and claude.ai connectors are then not loaded. Switch the connector off to use th
 | `src/main/handlers/secrets.ts` | `mcp:url-connect` and `mcp:chat-scripts` |
 | `src/main/agent-permissions.ts`, `src/main/agent/chatProfile.ts` | The `uv run` grant and the chat instructions |
 | `src/main/agent/skillScripts.ts` | The `skills.verify` action |
+| `e2e/bob-connector.mjs`, `.github/workflows/bob-skills.yml` | The connector driven on a packaged app, in CI on macOS and Linux |
