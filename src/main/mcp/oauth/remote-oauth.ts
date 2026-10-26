@@ -33,6 +33,8 @@ export interface OAuthEndpoints {
   resource?: string
   /** OAuth registration/client id to use in the PKCE flow (public). */
   clientId?: string
+  /** RFC 7591 registration endpoint, when the auth server offers one. */
+  registrationEndpoint?: string
 }
 
 /** A resolved token set from an exchange/refresh. */
@@ -108,13 +110,19 @@ export function parseProtectedResource(
 export function parseAuthServerMetadata(doc: unknown): {
   authorizationEndpoint: string
   tokenEndpoint: string
+  registrationEndpoint?: string
 } | null {
   if (!doc || typeof doc !== 'object') return null
   const m = doc as AuthServerMetadata
   if (typeof m.authorization_endpoint !== 'string' || typeof m.token_endpoint !== 'string') {
     return null
   }
-  return { authorizationEndpoint: m.authorization_endpoint, tokenEndpoint: m.token_endpoint }
+  const out: { authorizationEndpoint: string; tokenEndpoint: string; registrationEndpoint?: string } = {
+    authorizationEndpoint: m.authorization_endpoint,
+    tokenEndpoint: m.token_endpoint,
+  }
+  if (typeof m.registration_endpoint === 'string' && m.registration_endpoint) out.registrationEndpoint = m.registration_endpoint
+  return out
 }
 
 /**
@@ -142,7 +150,80 @@ export async function discoverEndpoints(
     authorizationEndpoint: as.authorizationEndpoint,
     tokenEndpoint: as.tokenEndpoint,
     resource: pr.resource ?? mcpUrl,
+    ...(as.registrationEndpoint ? { registrationEndpoint: as.registrationEndpoint } : {}),
   })
+}
+
+// ── Server probe ─────────────────────────────────────────────────────────────
+
+/**
+ * Whether an MCP server answers without a sign-in: an `initialize` request
+ * that succeeds means 'open'; a 401 means it wants OAuth ('auth'). Anything
+ * else (unreachable, 404, 5xx) is an error the person can act on.
+ */
+export async function probeMcpServer(
+  mcpUrl: string,
+  fetchFn: OAuthFetch,
+): Promise<OAuthResult<'open' | 'auth'>> {
+  let res: { ok: boolean; status: number }
+  try {
+    res = await fetchFn(mcpUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'workspace-os', version: '1' } },
+      }),
+    })
+  } catch {
+    return fail('Could not reach the server at that address.')
+  }
+  if (res.ok) return ok('open')
+  if (res.status === 401) return ok('auth')
+  if (res.status === 404) return fail('No MCP server answers at that address (404). Check the path, usually /mcp.')
+  return fail(`The server answered with status ${res.status}.`)
+}
+
+// ── Dynamic client registration ──────────────────────────────────────────────
+
+/**
+ * Registers Workspace OS as a public client (RFC 7591) for one redirect URI
+ * and returns the client id. Used for servers whose address the person sets,
+ * where no client id can be shipped in advance.
+ */
+export async function registerClient(
+  registrationEndpoint: string,
+  redirectUri: string,
+  fetchFn: OAuthFetch,
+): Promise<OAuthResult<string>> {
+  let res: { ok: boolean; status: number; json: () => Promise<unknown> }
+  try {
+    res = await fetchFn(registrationEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        client_name: 'Workspace OS',
+        redirect_uris: [redirectUri],
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'none',
+      }),
+    })
+  } catch {
+    return fail('Could not reach the server to register Workspace OS.')
+  }
+  let data: { client_id?: unknown } = {}
+  try {
+    data = ((await res.json()) as { client_id?: unknown }) ?? {}
+  } catch {
+    /* unreadable → handled below */
+  }
+  if (!res.ok || typeof data.client_id !== 'string' || !data.client_id) {
+    return fail('The server refused to register Workspace OS as a client.')
+  }
+  return ok(data.client_id)
 }
 
 // ── Authorization URL ────────────────────────────────────────────────────────

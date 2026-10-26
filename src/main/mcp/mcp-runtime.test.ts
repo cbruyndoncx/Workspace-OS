@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { resolveMcpInjection } from './mcp-runtime'
 import type { BuiltMcpConfig } from './mcp-config'
+import type { ConnectorEndpoint } from './connector-settings'
 
 /** A vault stub keyed by an in-memory map — never touches disk/Electron. */
 function vaultWith(secrets: Record<string, string>): {
@@ -187,5 +188,35 @@ describe('resolveMcpInjection', () => {
     )
     expect(out.wired).toEqual([])
     expect(out.skippedMissingSecret).toEqual(['sentry'])
+  })
+})
+
+describe('resolveMcpInjection — server-address connectors (bob-skills)', () => {
+  const helper = (id: string): string => `/bin/wos-mcp-token ${id}`
+  const at = (ep: ConnectorEndpoint | undefined) => (id: string) => (id === 'bob_skills' ? ep : undefined)
+
+  it('wires in a server that needs no sign-in, with a strict config and its tool prefix', () => {
+    const spy = configSpy()
+    const out = resolveMcpInjection(['bob_skills'], vaultWith({}), '/ws', '/userData', spy.fn, helper, at({ url: 'http://127.0.0.1:3939/mcp', auth: 'none', chatScripts: false }))
+    expect(out.wired).toEqual(['bob_skills'])
+    expect(out.args).toEqual(['--mcp-config', '/userData/.mcp.json', '--strict-mcp-config'])
+    expect(out.allowTools).toEqual(['mcp__bob_skills__*'])
+    expect(out.env).toEqual({})
+  })
+
+  it('a signed-in server wires in only with its OAuth record in the vault', () => {
+    const ep = at({ url: 'https://bob.example/mcp', auth: 'oauth', chatScripts: false })
+    const without = resolveMcpInjection(['bob_skills'], vaultWith({}), '/ws', '/userData', configSpy().fn, helper, ep)
+    expect(without.wired).toEqual([])
+    expect(without.skippedMissingSecret).toEqual(['bob_skills'])
+    const withRecord = resolveMcpInjection(['bob_skills'], vaultWith({ 'MCP_OAUTH_bob_skills': '{}' }), '/ws', '/userData', configSpy().fn, helper, ep)
+    expect(withRecord.wired).toEqual(['bob_skills'])
+  })
+
+  it('is skipped while no address is stored', () => {
+    const out = resolveMcpInjection(['bob_skills'], vaultWith({}), '/ws', '/userData', configSpy().fn, helper, at(undefined))
+    expect(out.wired).toEqual([])
+    expect(out.args).toEqual([])
+    expect(out.skippedMissingSecret).toEqual(['bob_skills'])
   })
 })

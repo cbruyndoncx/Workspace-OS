@@ -93,6 +93,12 @@ describe('codexMcpProfileToml', () => {
     expect(toml).not.toContain('headersHelper')
     expect(toml).not.toContain('[mcp_servers.asana]')
   })
+  it('writes a server that needs no sign-in as its address alone', () => {
+    const toml = codexMcpProfileToml({ mcpServers: { bob_skills: { type: 'http', url: 'http://127.0.0.1:3939/mcp' } } })
+    expect(toml).toContain('[mcp_servers.bob_skills]')
+    expect(toml).toContain('url = "http://127.0.0.1:3939/mcp"')
+    expect(toml).not.toContain('bearer_token_env_var')
+  })
   it('skips ids that are not TOML-safe and escapes strings', () => {
     const toml = codexMcpProfileToml({ mcpServers: { 'bad id': { command: 'x' }, fs: { command: 'node', args: ['/tmp/a "b"/srv.mjs'] } } })
     expect(toml).not.toContain('bad id')

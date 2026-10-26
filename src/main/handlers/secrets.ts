@@ -3,12 +3,13 @@ import { IPC } from '../ipc-channels'
 import { ipcHandle } from '../ipc-registry'
 import { IpcValidationError } from '../ipc-validator'
 import { assertMainFrame } from '../security'
-import { getVault, getConnectorState } from '../secrets'
+import { getVault, getConnectorState, getConnectorSettings } from '../secrets'
 import { isValidSecretName } from '../secrets/vault'
-import { CONNECTORS, getConnector, isConnectorId, isRemoteOAuth, requiredSecretNames } from '../mcp/connectors'
+import { CONNECTORS, getConnector, isConnectorId, isRemoteOAuth, isRemoteUrl, requiredSecretNames, type Connector } from '../mcp/connectors'
+import { normalizeServerUrl } from '../mcp/connector-settings'
 import { runRemoteOAuthFlow, type RemoteFlowDeps } from '../mcp/oauth/remote-flow'
 import { remoteVaultKey, serializeRecord } from '../mcp/oauth/remote-vault'
-import type { OAuthFetch } from '../mcp/oauth/remote-oauth'
+import { probeMcpServer, type OAuthFetch } from '../mcp/oauth/remote-oauth'
 
 /** Adapts the runtime global fetch to the narrow OAuthFetch the flow expects. */
 const nodeFetch: OAuthFetch = (url, init) =>
@@ -29,6 +30,11 @@ function resolveRemoteClientId(connectorId: string, configured?: string): string
   // server may still require DCR; that surfaces as a clear auth error the user
   // can act on. Never a secret.
   return 'workspace-os'
+}
+
+/** The kind a connector reports to the renderer. */
+function kindOf(c: Connector): 'stdio-apikey' | 'remote-oauth' | 'remote-url' {
+  return isRemoteUrl(c) ? 'remote-url' : isRemoteOAuth(c) ? 'remote-oauth' : 'stdio-apikey'
 }
 
 /**
@@ -83,7 +89,7 @@ export function registerSecretsHandlers(ipcMain: IpcMain): void {
       id: c.id,
       displayName: c.displayName,
       description: c.description,
-      kind: isRemoteOAuth(c) ? ('remote-oauth' as const) : ('stdio-apikey' as const),
+      kind: kindOf(c),
       secrets: c.secrets.map((s) => ({ envVar: s.envVar, label: s.label, hint: s.hint })),
     }))
   })
@@ -117,17 +123,22 @@ export function registerSecretsHandlers(ipcMain: IpcMain): void {
       // A remote-oauth connector is "ready" when it is enabled AND connected (an
       // OAuth record is stored) — it has no env secrets.
       const remote = isRemoteOAuth(c)
-      const connected = remote && v.has(remoteVaultKey(c.id))
+      const ep = isRemoteUrl(c) ? getConnectorSettings().get(c.id) : undefined
+      const connected = remote
+        ? v.has(remoteVaultKey(c.id))
+        : isRemoteUrl(c)
+          ? !!ep && (ep.auth === 'none' || v.has(remoteVaultKey(c.id)))
+          : undefined
       return {
         id: c.id,
-        kind: remote ? ('remote-oauth' as const) : ('stdio-apikey' as const),
+        kind: kindOf(c),
         enabled: enabled.has(c.id),
         requiredSecrets: need,
         missingSecrets: missing,
-        connected: remote ? connected : undefined,
-        ready: remote
-          ? enabled.has(c.id) && !!connected
-          : enabled.has(c.id) && missing.length === 0,
+        connected,
+        ready: connected === undefined
+          ? enabled.has(c.id) && missing.length === 0
+          : enabled.has(c.id) && connected,
       }
     })
   })
@@ -167,7 +178,7 @@ export function registerSecretsHandlers(ipcMain: IpcMain): void {
       serializeRecord({
         refreshToken,
         tokenEndpoint: flow.endpoints.tokenEndpoint,
-        clientId,
+        clientId: flow.clientId,
         resource: flow.endpoints.resource,
         accessToken: flow.tokens.accessToken,
         accessTokenExpiresAt: flow.tokens.expiresAt,
@@ -177,6 +188,66 @@ export function registerSecretsHandlers(ipcMain: IpcMain): void {
     // doesn't enable, but connecting is an explicit user action here).
     getConnectorState().enable(id)
     return { ok: true as const, connected: true }
+  })
+
+  /**
+   * Connect a 'remote-url' connector to the address the person typed. A server
+   * that answers without a sign-in is stored as is; one that answers 401 gets
+   * the loopback OAuth flow against that address (registering Workspace OS as
+   * a client when the server offers it). Enables the connector on success.
+   */
+  ipcHandle(ipcMain, IPC.MCP_URL_CONNECT, async (event, id: unknown, url: unknown) => {
+    assertMainFrame(event)
+    if (!isConnectorId(id)) throw new IpcValidationError('Unknown connector')
+    const connector = getConnector(id)
+    if (!connector || !isRemoteUrl(connector)) return { ok: false as const, error: 'This connector has no address to set.' }
+    const norm = normalizeServerUrl(url)
+    if (!norm.ok) return { ok: false as const, error: norm.error }
+    const probe = await probeMcpServer(norm.url, nodeFetch)
+    if (!probe.ok) return { ok: false as const, error: probe.error }
+    const key = remoteVaultKey(id)
+    if (probe.value === 'open') {
+      // A previous sign-in to another server must not ride along.
+      if (key && vault().has(key)) vault().remove(key)
+      getConnectorSettings().setEndpoint(id, norm.url, 'none')
+      getConnectorState().enable(id)
+      return { ok: true as const, auth: 'none' as const }
+    }
+    const configured = process.env[`MCP_OAUTH_${id.toUpperCase().replace(/-/g, '_')}_CLIENT_ID`]?.trim()
+    const flow = await runRemoteOAuthFlow(
+      { ...connector.remote, url: norm.url, resource: undefined, scopes: connector.remote?.scopes ?? [] },
+      { fetchFn: nodeFetch, clientId: configured || undefined },
+    )
+    if (!flow.ok) return { ok: false as const, error: flow.error }
+    if (!flow.tokens.refreshToken) {
+      return { ok: false as const, error: 'The server did not return a refresh token — cannot stay connected.' }
+    }
+    if (!key) return { ok: false as const, error: 'Invalid connector id.' }
+    vault().set(
+      key,
+      serializeRecord({
+        refreshToken: flow.tokens.refreshToken,
+        tokenEndpoint: flow.endpoints.tokenEndpoint,
+        clientId: flow.clientId,
+        resource: flow.endpoints.resource,
+        accessToken: flow.tokens.accessToken,
+        accessTokenExpiresAt: flow.tokens.expiresAt,
+      }),
+    )
+    getConnectorSettings().setEndpoint(id, norm.url, 'oauth')
+    getConnectorState().enable(id)
+    return { ok: true as const, auth: 'oauth' as const }
+  })
+
+  /** Whether chats may run this connector's skill scripts (`uv run`). Off unless switched on. */
+  ipcHandle(ipcMain, IPC.MCP_CHAT_SCRIPTS, (event, id: unknown, on: unknown) => {
+    assertMainFrame(event)
+    if (!isConnectorId(id)) throw new IpcValidationError('Unknown connector')
+    if (typeof on !== 'boolean') throw new IpcValidationError('Expected on/off')
+    if (!getConnector(id)?.chatScripts) throw new IpcValidationError('This connector has no scripts setting')
+    if (!getConnectorSettings().get(id)) return { ok: false as const, error: 'Connect the server first.' }
+    getConnectorSettings().setChatScripts(id, on)
+    return { ok: true as const }
   })
 
   /** Connected? (an OAuth record is stored). No token crosses IPC. */

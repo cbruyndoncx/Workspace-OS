@@ -249,8 +249,16 @@ export interface ConnectionSecretView {
   hint: string
   stored: boolean
 }
+/** A connector whose server address the person sets (kind 'remote-url'). */
+export interface ConnectionAddressView {
+  url: string | null
+  placeholder: string
+  hint: string
+  /** Chats may run the server's skill scripts; null when the connector has no such switch. */
+  chatScripts: boolean | null
+}
 export type ConnectionSource =
-  | { type: 'mcp'; connectorId: string; remote: boolean; enabled: boolean; secrets: ConnectionSecretView[] }
+  | { type: 'mcp'; connectorId: string; remote: boolean; enabled: boolean; secrets: ConnectionSecretView[]; address?: ConnectionAddressView }
   | { type: 'site'; domain: string }
   | { type: 'mail'; accountId: string }
   | { type: 'calendar'; sourceId: string }
@@ -775,14 +783,14 @@ export interface WorkspaceApi {
       id: string
       displayName: string
       description: string
-      kind: 'stdio-apikey' | 'remote-oauth'
+      kind: 'stdio-apikey' | 'remote-oauth' | 'remote-url'
       secrets: { envVar: string; label: string; hint: string }[]
     }[]>
     enable: (id: string) => Promise<{ ok: true }>
     disable: (id: string) => Promise<{ ok: true }>
     status: () => Promise<{
       id: string
-      kind: 'stdio-apikey' | 'remote-oauth'
+      kind: 'stdio-apikey' | 'remote-oauth' | 'remote-url'
       enabled: boolean
       requiredSecrets: string[]
       missingSecrets: string[]
@@ -796,6 +804,10 @@ export interface WorkspaceApi {
     oauthStatus: (id: string) => Promise<{ connected: boolean }>
     /** Remote OAuth — disconnect (remove the stored record). */
     oauthDisconnect: (id: string) => Promise<{ ok: true }>
+    /** Server-address connector — probe the address, sign in if the server asks, then turn it on. */
+    urlConnect: (id: string, url: string) => Promise<{ ok: true; auth: 'none' | 'oauth' } | { ok: false; error: string }>
+    /** Server-address connector — whether chats may run its skill scripts. */
+    setChatScripts: (id: string, on: boolean) => Promise<{ ok: true } | { ok: false; error: string }>
   }
   /** Native IMAP client (Phase 1: read-only inbox). Password crosses only on add/test. */
   mail: {

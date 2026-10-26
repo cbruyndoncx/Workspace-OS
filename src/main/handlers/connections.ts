@@ -3,9 +3,9 @@ import { IPC } from '../ipc-channels'
 import { ipcHandle } from '../ipc-registry'
 import { IpcValidationError } from '../ipc-validator'
 import { assertMainFrame } from '../security'
-import { getVault, getConnectorState } from '../secrets'
+import { getVault, getConnectorState, getConnectorSettings } from '../secrets'
 import { accountsStore } from '../accounts'
-import { CONNECTORS, isConnectorId, isRemoteOAuth, requiredSecretNames } from '../mcp/connectors'
+import { CONNECTORS, isConnectorId, isRemoteOAuth, isRemoteUrl, requiredSecretNames } from '../mcp/connectors'
 import { needsRefresh, parseRecord, remoteVaultKey, serializeRecord } from '../mcp/oauth/remote-vault'
 import { refreshAccessToken, type OAuthFetch } from '../mcp/oauth/remote-oauth'
 import { resolveGoogleClientId } from '../mail/oauth/client-config'
@@ -80,10 +80,30 @@ async function gather(force: boolean): Promise<ConnectionInputs> {
   const enabled = new Set(getConnectorState().enabled())
   const userData = app.getPath('userData')
 
+  const settings = getConnectorSettings()
   const mcp = await Promise.all(
     CONNECTORS.map(async (c) => {
       const remote = isRemoteOAuth(c)
       const need = requiredSecretNames(c.id)
+      if (isRemoteUrl(c)) {
+        const ep = settings.get(c.id)
+        return {
+          id: c.id,
+          displayName: c.displayName,
+          description: c.description,
+          remote: false,
+          enabled: enabled.has(c.id),
+          secrets: [],
+          oauth: ep?.auth === 'oauth' ? await cachedProbe(`mcp:${c.id}`, force, () => probeMcpOAuth(c.id)) : ('none' as const),
+          address: {
+            url: ep?.url ?? null,
+            auth: ep?.auth ?? null,
+            placeholder: c.urlHint?.placeholder ?? 'https://…/mcp',
+            hint: c.urlHint?.hint ?? '',
+            chatScripts: c.chatScripts ? (ep?.chatScripts ?? false) : null,
+          },
+        }
+      }
       return {
         id: c.id,
         displayName: c.displayName,
@@ -178,6 +198,7 @@ export function registerConnectionsHandlers(ipcMain: IpcMain): void {
         const key = remoteVaultKey(rest)
         if (key && vault.has(key)) vault.remove(key)
         for (const name of requiredSecretNames(rest)) if (vault.has(name)) vault.remove(name)
+        getConnectorSettings().remove(rest)
         getConnectorState().disable(rest)
         probeCache.delete(`mcp:${rest}`)
         return { ok: true as const }

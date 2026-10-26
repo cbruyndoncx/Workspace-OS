@@ -105,3 +105,18 @@ describe('Codex document bridge grants', () => {
     expect((await handleRequest({ cmd: 'run', actionId: 'document.data', token: bound }, { ...deps, context: () => ({ ...ctx, root: '/elsewhere' }) })).ok).toBe(false)
   })
 })
+
+describe('actionBridge — skills.verify', () => {
+  const table = new GrantTable()
+  const narrow = table.issue('r3', ['research'], 'chat')
+  const skills = vi.fn(async (): Promise<ActionReply> => ({ ok: true, result: { match: true } }))
+  const invoke = vi.fn(async (): Promise<ActionReply> => ({ ok: true }))
+
+  it('every run may check a skill script, and it is handled in main, not the renderer', async () => {
+    const deps = { context: () => ctx, invoke, skills, grants: (t: unknown) => table.lookup(t) }
+    const reply = await handleRequest({ cmd: 'run', actionId: 'skills.verify', args: { path: 'a/b.py', sha256: 'x' }, token: narrow }, deps)
+    expect(reply).toEqual({ ok: true, result: { match: true } })
+    expect(skills).toHaveBeenCalledWith('skills.verify', { path: 'a/b.py', sha256: 'x' })
+    expect(invoke).not.toHaveBeenCalled()
+  })
+})

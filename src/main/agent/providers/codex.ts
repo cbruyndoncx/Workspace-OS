@@ -242,6 +242,11 @@ export function codexMcpProfileToml(cfg: McpJsonConfig, bearerEnvVarByServer: Re
         out.push('', `[mcp_servers.${id}]`, `url = ${tomlString(srv.url)}`, `http_headers_helper = ${tomlString(srv.headersHelper)}`, 'default_tools_approval_mode = "prompt"')
         continue
       }
+      if (srv.url && !srv.headersHelper) {
+        // No sign-in needed (connector-settings.ts 'none'): the address alone.
+        out.push('', `[mcp_servers.${id}]`, `url = ${tomlString(srv.url)}`, `default_tools_approval_mode = "${opts.interactive ? 'prompt' : 'approve'}"`)
+        continue
+      }
       if (!srv.url || !envVar) continue // no bearer minted → the server would only fail auth
       out.push('', `[mcp_servers.${id}]`, `url = ${tomlString(srv.url)}`, `bearer_token_env_var = ${tomlString(envVar)}`, 'default_tools_approval_mode = "approve"')
       continue

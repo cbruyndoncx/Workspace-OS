@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { requestNewTab } from '../Browser/browserTabCommands'
 import type { RailId } from '../Shell/shellModel'
-import type { Connection, ConnectionStatus } from '../../types/workspace-api'
+import type { Connection, ConnectionAddressView, ConnectionStatus } from '../../types/workspace-api'
 import styles from './ConnectorsView.module.css'
 
 /**
@@ -100,12 +100,26 @@ export function ConnectorsView({ active, onNavigate }: { active: boolean; onNavi
     })
   }
 
+  /** Connects a server-address connector: the main side probes it and signs in if the server asks. */
+  const connectUrl = async (id: string, url: string): Promise<void> => {
+    const r = await window.workspace.mcp.urlConnect(id, url)
+    if (!r.ok) throw new Error(r.error || 'Could not connect')
+  }
+
   /** The one action a row offers, by its source and status. */
   const primary = (c: Connection): { label: string; go: () => Promise<void> } | null => {
     const s = c.source
     switch (s.type) {
       case 'mcp': {
         const id = s.connectorId
+        if (s.address) {
+          const url = s.address.url
+          if (c.status === 'setup') return { label: 'Set up', go: async () => setOpen(c.id) }
+          if (c.status === 'needs-signin' && url) return { label: 'Sign in again', go: () => connectUrl(id, url) }
+          return c.status === 'off'
+            ? { label: 'Turn on', go: async () => void (await window.workspace.mcp.enable(id)) }
+            : { label: 'Turn off', go: async () => void (await window.workspace.mcp.disable(id)) }
+        }
         if (s.remote) {
           if (c.status === 'needs-signin' || c.status === 'setup')
             return {
@@ -149,7 +163,7 @@ export function ConnectorsView({ active, onNavigate }: { active: boolean; onNavi
 
   /** Sign-out is destructive for accounts, so it lives in the expanded panel, never on the row. */
   const canSignOut = (c: Connection): boolean =>
-    c.source.type !== 'site' && !(c.source.type === 'mcp' && c.status === 'setup' && !c.source.remote) && c.status !== 'setup'
+    c.source.type !== 'site' && !(c.source.type === 'mcp' && c.status === 'setup' && !c.source.remote) && (c.status !== 'setup' || (c.source.type === 'mcp' && !!c.source.address?.url))
 
   const sorted = useMemo(() => list ?? [], [list])
   const secureUnavailable = !!vault && !vault.available
@@ -194,7 +208,7 @@ export function ConnectorsView({ active, onNavigate }: { active: boolean; onNavi
                 {act && (
                   <button
                     className={`${styles.action} ${c.status === 'needs-signin' || c.status === 'setup' ? styles.actionWarm : ''}`}
-                    disabled={!!busy[c.id] || (secureUnavailable && c.source.type === 'mcp')}
+                    disabled={!!busy[c.id] || (secureUnavailable && c.source.type === 'mcp' && !c.source.address)}
                     onClick={() => void run(c.id, act.go)}
                     data-testid="connection-action"
                   >
@@ -240,6 +254,22 @@ export function ConnectorsView({ active, onNavigate }: { active: boolean; onNavi
                           <p className={styles.hint}>{s.hint}</p>
                         </div>
                       ))}
+                    {c.source.type === 'mcp' && c.source.address && (
+                      <AddressPanel
+                        connectorId={c.source.connectorId}
+                        address={c.source.address}
+                        draft={drafts[c.id]}
+                        onDraft={(v) => setDrafts((d) => ({ ...d, [c.id]: v }))}
+                        busy={!!busy[c.id]}
+                        onConnect={(id, url) => void run(c.id, () => connectUrl(id, url))}
+                        onChatScripts={(id, on) =>
+                          void run(c.id, async () => {
+                            const r = await window.workspace.mcp.setChatScripts(id, on)
+                            if (!r.ok) throw new Error(r.error)
+                          })
+                        }
+                      />
+                    )}
                     {canSignOut(c) && (
                       <button
                         className={`${styles.quiet} ${styles.danger}`}
@@ -283,5 +313,83 @@ export function ConnectorsView({ active, onNavigate }: { active: boolean; onNavi
         </p>
       </div>
     </div>
+  )
+}
+
+/**
+ * The address field of a server-address connector (BOB skills), and its
+ * "chats may run skill scripts" switch once a server is connected.
+ */
+function AddressPanel({
+  connectorId,
+  address,
+  draft,
+  onDraft,
+  busy,
+  onConnect,
+  onChatScripts,
+}: {
+  connectorId: string
+  address: ConnectionAddressView
+  draft: string | undefined
+  onDraft: (v: string) => void
+  busy: boolean
+  onConnect: (id: string, url: string) => void
+  onChatScripts: (id: string, on: boolean) => void
+}): JSX.Element {
+  const value = draft ?? address.url ?? ''
+  const changed = value.trim() !== (address.url ?? '')
+  return (
+    <>
+      <div className={styles.key}>
+        <label className={styles.keyLabel}>
+          Server address
+          {address.url && <span className={styles.stored}> · connected</span>}
+        </label>
+        <div className={styles.keyField}>
+          <input
+            className={styles.input}
+            type="text"
+            inputMode="url"
+            autoComplete="off"
+            placeholder={address.placeholder}
+            value={value}
+            onChange={(e) => onDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && value.trim()) onConnect(connectorId, value.trim())
+            }}
+            data-testid="connector-address"
+          />
+          <button
+            className={styles.quiet}
+            disabled={busy || !value.trim() || (!changed && !!address.url)}
+            onClick={() => onConnect(connectorId, value.trim())}
+            data-testid="connector-address-connect"
+          >
+            {address.url ? 'Change' : 'Connect'}
+          </button>
+        </div>
+        <p className={styles.hint}>{address.hint}</p>
+      </div>
+      {address.chatScripts !== null && address.url && (
+        <div className={styles.key}>
+          <label className={styles.keyLabel}>
+            <input
+              type="checkbox"
+              checked={address.chatScripts}
+              disabled={busy}
+              onChange={(e) => onChatScripts(connectorId, e.target.checked)}
+              data-testid="connector-chat-scripts"
+            />{' '}
+            Chats may run skill scripts
+          </label>
+          <p className={styles.hint}>
+            Off: a chat reads skills but cannot run their scripts; hand the work to a case for that. On: a chat may run a
+            skill's own scripts with uv run, after checking each against the digest the server lists. uv run can run any
+            Python file, so a page or file the chat reads could try to misuse it; cases can already run commands.
+          </p>
+        </div>
+      )}
+    </>
   )
 }

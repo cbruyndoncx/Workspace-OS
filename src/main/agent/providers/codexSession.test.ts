@@ -27,6 +27,13 @@ describe('Codex session and isolation', () => {
     expect(JSON.stringify(config)).not.toContain('${SECRET}')
     expect(config.mcp_servers.remote.default_tools_approval_mode).toBe('writes') // reads never prompt; writes do
   })
+  it('passes a server that needs no sign-in without a helper', () => {
+    const config = codexThreadConfig({}, { mcpServers: { bob_skills: { type: 'http', url: 'http://127.0.0.1:3939/mcp' } } })
+    const servers = config.mcp_servers as Record<string, Record<string, unknown>>
+    expect(servers.bob_skills.url).toBe('http://127.0.0.1:3939/mcp')
+    expect(servers.bob_skills.http_headers_helper).toBeUndefined()
+  })
+
   it('resumes with current instructions, sandbox, model, and effort', async () => {
     const s = await setup({ resumeId: '00000000-0000-0000-0000-000000000002', model: 'test', effort: 'high' })
     expect(s.rpc.request).toHaveBeenCalledWith('thread/resume', expect.objectContaining({ sandbox: 'read-only', approvalPolicy: 'on-request', developerInstructions: 'persona', model: 'test' }), 60000)

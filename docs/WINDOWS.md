@@ -143,7 +143,8 @@ usable in a workspace only when both of these are set:
 Without them the agent answers that it cannot use the server. A chat then has the server's tools but
 no shell beyond `wos-gen` and `wos-action`; a case has both. With a connector enabled under Settings →
 Connectors, the run uses only the app's connectors and loads none of your own servers. The same
-applies on Linux; see [LINUX-WSL.md](LINUX-WSL.md).
+applies on Linux; see [LINUX-WSL.md](LINUX-WSL.md). For BOB skills, the **BOB skills** connector
+avoids both settings and works alongside the other connectors; see [BOB-SKILLS.md](BOB-SKILLS.md).
 
 ## Build from source
 

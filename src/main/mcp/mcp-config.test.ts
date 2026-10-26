@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { buildMcpConfigObject } from './mcp-config'
-import { CONNECTORS, isRemoteOAuth, toolPrefix } from './connectors'
+import { CONNECTORS, isRemoteOAuth, isRemoteUrl, toolPrefix } from './connectors'
+import type { ConnectorEndpoint } from './connector-settings'
+import { remoteVaultKey } from './oauth/remote-vault'
 
 /** The new Wave connectors added on top of github/filesystem/postgres. */
 const NEW_CONNECTORS = ['brave', 'slack', 'notion', 'tavily'] as const
@@ -63,6 +65,16 @@ describe('buildMcpConfigObject', () => {
       if (isRemoteOAuth(c)) {
         // Remote connectors don't launch a local process; they carry OAuth config.
         expect(c.remote?.url).toMatch(/^https:\/\//)
+        expect(remoteVaultKey(c.id)).not.toBe('')
+        continue
+      }
+      if (isRemoteUrl(c)) {
+        // Its sign-in record needs a valid vault key name (no hyphen in the id).
+        expect(remoteVaultKey(c.id)).not.toBe('')
+        // The address is the person's: none ships, but the field has its help.
+        expect(c.remote?.url).toBe('')
+        expect(c.urlHint?.placeholder.length).toBeGreaterThan(0)
+        expect(c.urlHint?.hint.length).toBeGreaterThan(0)
         continue
       }
       expect(c.command).toBe('npx')
@@ -148,5 +160,28 @@ describe('buildMcpConfigObject', () => {
     const { config, enabled } = buildMcpConfigObject(['sentry'], '/ws')
     expect(config.mcpServers['sentry']).toBeUndefined()
     expect(enabled).not.toContain('sentry')
+  })
+})
+
+describe('buildMcpConfigObject — server-address connectors (bob-skills)', () => {
+  const helper = (id: string): string => `/bin/wos-mcp-token ${id}`
+  const at = (ep: ConnectorEndpoint | undefined) => (id: string) => (id === 'bob_skills' ? ep : undefined)
+
+  it('a server without sign-in is written as its address alone', () => {
+    const { config, allowTools, enabled } = buildMcpConfigObject(['bob_skills'], '/ws', helper, at({ url: 'http://127.0.0.1:3939/mcp', auth: 'none', chatScripts: false }))
+    expect(config.mcpServers['bob_skills']).toEqual({ type: 'http', url: 'http://127.0.0.1:3939/mcp' })
+    expect(allowTools).toEqual([toolPrefix('bob_skills')])
+    expect(enabled).toEqual(['bob_skills'])
+  })
+
+  it('a signed-in server also gets the token helper, never a token', () => {
+    const { config } = buildMcpConfigObject(['bob_skills'], '/ws', helper, at({ url: 'https://bob.example/mcp', auth: 'oauth', chatScripts: false }))
+    expect(config.mcpServers['bob_skills']).toEqual({ type: 'http', url: 'https://bob.example/mcp', headersHelper: '/bin/wos-mcp-token bob_skills' })
+  })
+
+  it('is skipped until an address is stored, and a signed-in one without a helper', () => {
+    expect(buildMcpConfigObject(['bob_skills'], '/ws', helper, at(undefined)).enabled).toEqual([])
+    expect(buildMcpConfigObject(['bob_skills'], '/ws', helper).enabled).toEqual([])
+    expect(buildMcpConfigObject(['bob_skills'], '/ws', undefined, at({ url: 'https://bob.example/mcp', auth: 'oauth', chatScripts: false })).enabled).toEqual([])
   })
 })

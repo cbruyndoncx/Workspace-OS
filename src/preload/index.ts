@@ -506,6 +506,9 @@ contextBridge.exposeInMainWorld('workspace', {
     oauthConnect: (id: string) => ipcRenderer.invoke(IPC.MCP_OAUTH_CONNECT, id),
     oauthStatus: (id: string) => ipcRenderer.invoke(IPC.MCP_OAUTH_STATUS, id),
     oauthDisconnect: (id: string) => ipcRenderer.invoke(IPC.MCP_OAUTH_DISCONNECT, id),
+    // Server-address connectors (BOB skills): connect to an address; chat scripts on/off.
+    urlConnect: (id: string, url: string) => ipcRenderer.invoke(IPC.MCP_URL_CONNECT, id, url),
+    setChatScripts: (id: string, on: boolean) => ipcRenderer.invoke(IPC.MCP_CHAT_SCRIPTS, id, on),
   },
 
   // Native mail client (Phase 1: read-only inbox). The password crosses only on

@@ -30,8 +30,12 @@ export interface ConnectorSecret {
  *    the PKCE loopback flow ourselves and feed the CLI a fresh bearer via a
  *    `headersHelper` (wos-mcp-token). No env secret; the `.mcp.json` entry is
  *    `{ type:"http", url, headersHelper }`.
+ *  - 'remote-url': a remote Streamable-HTTP MCP server at an address the person
+ *    sets (connector-settings.ts). Connecting probes it: a server that answers
+ *    without a sign-in is used as is (`{ type:"http", url }`); one that asks for
+ *    a sign-in runs the remote-oauth flow above against that address.
  */
-export type ConnectorKind = 'stdio-apikey' | 'remote-oauth'
+export type ConnectorKind = 'stdio-apikey' | 'remote-oauth' | 'remote-url'
 
 /** Configured OAuth endpoints for a remote-oauth connector (skips discovery). */
 export interface RemoteOAuthConfig {
@@ -49,6 +53,12 @@ export interface RemoteOAuthConfig {
    * dynamic-client-registration upstream; may be set via env at connect time.
    */
   clientId?: string
+  /**
+   * Register a client with the server (RFC 7591) when its metadata offers a
+   * registration endpoint and no client id is configured. For servers whose
+   * address the person chooses, so no client id can be shipped for them.
+   */
+  dynamicRegistration?: boolean
 }
 
 export interface Connector {
@@ -70,6 +80,10 @@ export interface Connector {
   secrets: ConnectorSecret[]
   /** Present only for kind 'remote-oauth' — the OAuth/endpoint config. */
   remote?: RemoteOAuthConfig
+  /** For kind 'remote-url': the address field's example and help. */
+  urlHint?: { placeholder: string; hint: string }
+  /** For kind 'remote-url': offer the "chats may run skill scripts" switch. */
+  chatScripts?: boolean
 }
 
 /** The connector's kind, defaulting to the Wave-1 stdio+API-key shape. */
@@ -80,6 +94,11 @@ export function connectorKind(c: Connector): ConnectorKind {
 /** True when the connector authenticates via our own remote OAuth flow. */
 export function isRemoteOAuth(c: Connector): boolean {
   return connectorKind(c) === 'remote-oauth'
+}
+
+/** True when the connector's address is set by the person (connector-settings.ts). */
+export function isRemoteUrl(c: Connector): boolean {
+  return connectorKind(c) === 'remote-url'
 }
 
 /**
@@ -261,6 +280,25 @@ export const CONNECTORS: readonly Connector[] = [
       resource: 'https://mcp.asana.com/v2/mcp',
       scopes: [],
     },
+  },
+  {
+    // A ThirdBrain skills server (github.com/cbruyndoncx/ThirdBrain-skills-mcp)
+    // serving the BOB library: the hosted BOB server, or one on this computer
+    // (`skills-mcp --lib bob=<pack> --http 3939`). The address is the person's;
+    // connecting finds out whether the server needs a sign-in.
+    id: 'bob_skills',
+    displayName: 'BOB skills',
+    description: 'BOB skills, playbooks and value chains from a skills server, loaded when a task needs them.',
+    kind: 'remote-url',
+    command: '',
+    args: [],
+    secrets: [],
+    remote: { url: '', scopes: [], dynamicRegistration: true },
+    urlHint: {
+      placeholder: 'https://…/mcp or http://127.0.0.1:3939/mcp',
+      hint: 'The address of the hosted BOB server, or of a skills server on this computer. A server that needs a sign-in opens it in your browser.',
+    },
+    chatScripts: true,
   },
 ] as const
 

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   permissionArgs,
+  safeModeCommandNote,
+  SKILL_SCRIPT_GRANT,
   isValidClaudeSessionId,
   isValidMcpTool,
   sanitizePromptPath,
@@ -153,5 +155,24 @@ describe('in-app browser pinning', () => {
 
   it('adds no --disallowedTools to safe mode when not pinned', () => {
     expect(permissionArgs('safe')).not.toContain('--disallowedTools')
+  })
+})
+
+describe('chats that may run skill scripts', () => {
+  it('safe mode gets `uv run` only when the setting is on', () => {
+    expect(permissionArgs('safe', [], { webInSafe: true })).not.toContain(SKILL_SCRIPT_GRANT)
+    const on = permissionArgs('safe', ['mcp__bob_skills__*'], { webInSafe: true, skillScripts: true })
+    expect(on).toContain('Bash(uv run:*)')
+    expect(on).toContain('mcp__bob_skills__*')
+    expect(on).not.toContain('Bash')
+  })
+
+  it('the shell note names uv run, the scripts folder and the digest check only when on', () => {
+    expect(safeModeCommandNote()).not.toContain('uv run')
+    const note = safeModeCommandNote({ skillScriptsDir: '/data/skill-scripts' })
+    expect(note).toContain('`uv run`')
+    expect(note).toContain('/data/skill-scripts')
+    expect(note).toContain('sha256')
+    expect(note).toMatch(/Never `uv run` a script you wrote/)
   })
 })

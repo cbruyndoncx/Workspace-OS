@@ -11,6 +11,7 @@ import { documentAction } from './documentActions'
 import { allows, grants, type Grant } from './grants'
 import { runAppAction } from '../apps/app-actions'
 import { createHash } from 'crypto'
+import { skillScriptsDirIn, verifySkillScript } from './skillScripts'
 
 /**
  * AGENT→ACTION bridge (main side).
@@ -106,6 +107,8 @@ export async function handleRequest(
     calendar?: (actionId: string, args: unknown) => Promise<ActionReply>
     documents?: (actionId: string, args: unknown) => Promise<ActionReply>
     data?: (args: unknown) => Promise<ActionReply>
+    /** Checking a skill script against its digest (./skillScripts.ts) — file IO in main. */
+    skills?: (actionId: string, args: unknown) => Promise<ActionReply>
     /** The app builder driving its own app (apps/app-actions.ts): only the app its grant names. */
     app?: (slug: string, actionId: string, args: unknown) => Promise<ActionReply>
     /**
@@ -143,6 +146,10 @@ export async function handleRequest(
         return { ok: false, error: `not granted: ${id} is outside what this agent was given` }
       }
     }
+    if (id === 'skills.verify') {
+      if (!deps.skills) return { ok: false, error: 'skill scripts are not available in this context' }
+      return deps.skills(id, req.args)
+    }
     if (id === 'document.data' && deps.data) return deps.data(req.args)
     if (id === 'document.generate' && deps.documents) return deps.documents(id, req.args)
     if (id.startsWith('cases.')) {
@@ -167,7 +174,9 @@ export async function handleRequest(
 /** Same authorization and dispatch for the socket and Codex's structured app tool. */
 export function invokeGrantedAction(req: ActionRequest): Promise<ActionReply> {
   return handleRequest(req, { context: getContext, invoke: invokeInRenderer, cases: runCaseAction,
-    calendar: runCalendarAction, documents: documentAction, data: dataAction, app: runAppAction, grants: (token) => grants.lookup(token) })
+    calendar: runCalendarAction, documents: documentAction, data: dataAction, app: runAppAction,
+    skills: async (_id, args) => verifySkillScript(args, skillScriptsDirIn(app.getPath('userData'))),
+    grants: (token) => grants.lookup(token) })
 }
 
 /** Forward a `run` to the focused window's renderer executor; await its reply. */

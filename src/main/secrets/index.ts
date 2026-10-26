@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { Vault } from './vault'
 import { safeSecretStore } from './secret-store'
 import { ConnectorState } from '../mcp/connector-state'
+import { ConnectorSettings } from '../mcp/connector-settings'
 
 /**
  * App-wide singletons for the secret vault + connector-enable state, both
@@ -20,4 +21,11 @@ export function getVault(): Vault {
 export function getConnectorState(): ConnectorState {
   if (!connectorState) connectorState = new ConnectorState(app.getPath('userData'))
   return connectorState
+}
+
+let connectorSettings: ConnectorSettings | null = null
+
+export function getConnectorSettings(): ConnectorSettings {
+  if (!connectorSettings) connectorSettings = new ConnectorSettings(app.getPath('userData'))
+  return connectorSettings
 }

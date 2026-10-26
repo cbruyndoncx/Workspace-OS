@@ -23,7 +23,8 @@ import { docgenBinDir, docgenVenvBinDir } from '../docgen'
 import type { AgentFile } from '../handlers/agents'
 import { extractActivity, type AgentActivity } from '../handlers/agent-activity'
 import { snapshotArtifacts, changedArtifacts, type Artifact } from '../artifacts'
-import { getVault, getConnectorState } from '../secrets'
+import { getVault, getConnectorState, getConnectorSettings } from '../secrets'
+import { getConnector } from '../mcp/connectors'
 import { resolveMcpInjection } from '../mcp/mcp-runtime'
 import { headersHelperCommand } from '../install-mcp-token-cli'
 import { agentSockPath, AGENT_SOCK_ENV, invokeGrantedAction } from './actionBridge'
@@ -32,6 +33,7 @@ import { KNOWLEDGE_GUIDANCE } from './knowledgeGuidance'
 import { forRun as memoryForRun, markUsed, buildMemoryBlock } from '../memory/memory-service'
 import { capabilityGuidanceBlock } from './capabilityCatalog'
 import { buildChatSystemPrompt } from './chatProfile'
+import { skillScriptsDirIn } from './skillScripts'
 import { appBuilderArgs, buildAppBuilderPrompt } from './appBuilderProfile'
 import { endAppSession } from '../apps/app-actions'
 import { grants, AGENT_TOKEN_ENV } from './grants'
@@ -215,7 +217,9 @@ export async function launchRun(o: LaunchRunOptions): Promise<{ child: ChildProc
     // argv/logs/config. If nothing is enabled/ready, this is a no-op.
     let mcpArgs: string[] = []
     let mcpAllowTools: string[] = []
+    let mcpWired: string[] = []
     let injectedSecretKeys: string[] = []
+    const endpoints = getConnectorSettings().resolver()
     try {
       const injection = resolveMcpInjection(
         getConnectorState().enabled(),
@@ -226,18 +230,29 @@ export async function launchRun(o: LaunchRunOptions): Promise<{ child: ChildProc
         // Remote-oauth connectors get a `headersHelper` in the .mcp.json that
         // points at wos-mcp-token — the CLI mints a fresh Bearer at connect.
         headersHelperCommand,
+        endpoints,
       )
       Object.assign(childEnv, injection.env)
       injectedSecretKeys = Object.keys(injection.env)
       mcpArgs = injection.args
       mcpAllowTools = injection.allowTools
+      mcpWired = injection.wired
     } catch {
       if (provider === 'codex') { grants.revoke(id); throw new Error('Could not load Workspace connectors. Check Settings and retry.') }
       // A vault/keychain failure must not brick a normal (non-MCP) run — proceed
       // without connectors rather than aborting. (No secret is logged.)
       mcpArgs = []
       mcpAllowTools = []
+      mcpWired = []
     }
+
+    // A chat may run skill scripts (`uv run`) only when a wired-in skills
+    // connector has the person's "chats may run skill scripts" switch on. The
+    // scripts are written to a folder of their own, outside the workspace.
+    const skillScriptsDir = chat && provider === 'claude' && mcpWired.some((cid) => getConnector(cid)?.chatScripts && endpoints(cid)?.chatScripts)
+      ? skillScriptsDirIn(app.getPath('userData'))
+      : undefined
+    if (skillScriptsDir) fs.mkdirSync(skillScriptsDir, { recursive: true })
 
     if (provider === 'codex') {
       let skills: { name: string; path: string }[] = []
@@ -291,14 +306,14 @@ export async function launchRun(o: LaunchRunOptions): Promise<{ child: ChildProc
       mcpArgs = []
       for (const key of injectedSecretKeys) delete childEnv[key]
     }
-    const permArgs = appSlug ? appBuilderArgs(appSlug, appsRel(cwd)) : permissionArgs(safeMode || chat ? 'safe' : 'full', mcpAllowTools, { inAppBrowserOnly, webInSafe: chat })
+    const permArgs = appSlug ? appBuilderArgs(appSlug, appsRel(cwd)) : permissionArgs(safeMode || chat ? 'safe' : 'full', mcpAllowTools, { inAppBrowserOnly, webInSafe: chat, skillScripts: !!skillScriptsDir })
 
     // First turn establishes the system context (persona + IWE grounding). On a
     // resumed turn the conversation already carries it, so re-appending would
     // bloat it — pass --resume instead and skip the system prompt.
     const continuityArgs = resumeId
       ? ['--resume', resumeId]
-      : ['--append-system-prompt', appSlug ? buildAppBuilderPrompt(appSlug, cwd, appsRel(cwd)) : chat ? buildChatSystemPrompt(cwd, memoryBlock) : buildSystemPrompt(cwd, openFile, agent?.persona, agent?.capabilities, safeMode, memoryBlock)]
+      : ['--append-system-prompt', appSlug ? buildAppBuilderPrompt(appSlug, cwd, appsRel(cwd)) : chat ? buildChatSystemPrompt(cwd, memoryBlock, { skillScriptsDir }) : buildSystemPrompt(cwd, openFile, agent?.persona, agent?.capabilities, safeMode, memoryBlock)]
 
     // On a resumed turn the system prompt (with the original open file) isn't
     // re-sent; nudge the agent with the *current* open file so it stays accurate.
@@ -306,7 +321,10 @@ export async function launchRun(o: LaunchRunOptions): Promise<{ child: ChildProc
 
     // An external store sits outside cwd; grant it so the agent can read
     // uploads, agent-context.json and the captured page.
-    const stateDirArgs = wsRoot && stateIsExternal(wsRoot) ? ['--add-dir', appStateDir(wsRoot)] : []
+    const stateDirArgs = [
+      ...(wsRoot && stateIsExternal(wsRoot) ? ['--add-dir', appStateDir(wsRoot)] : []),
+      ...(skillScriptsDir ? ['--add-dir', skillScriptsDir] : []),
+    ]
 
     // Hooks stay off unless this workspace opts in (host-profile.ts agentHooks).
     // The app builder runs with no setting sources at all, so it keeps them off.

@@ -29,8 +29,8 @@ export function codexThreadConfig(inherited: RpcRecord, cfg: McpJsonConfig, safe
     const entry: RpcRecord = { enabled: true, required: true, default_tools_approval_mode: 'writes' }
     if (server.url) {
       entry.url = server.url
-      if (!server.headersHelper) throw new Error(`Connector ${id} has no authentication helper`)
-      entry.http_headers_helper = server.headersHelper
+      // A server that needs no sign-in (a skills server on this computer) has no helper.
+      if (server.headersHelper) entry.http_headers_helper = server.headersHelper
     } else {
       entry.command = server.command
       entry.args = server.args ?? []

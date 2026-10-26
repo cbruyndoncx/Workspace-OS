@@ -1,4 +1,5 @@
-import { getConnector, isRemoteOAuth, requiredSecretNames } from './connectors'
+import { getConnector, isRemoteOAuth, isRemoteUrl, requiredSecretNames } from './connectors'
+import type { EndpointResolver } from './connector-settings'
 import { buildMcpConfig, type HeadersHelperResolver } from './mcp-config'
 import { remoteVaultKey } from './oauth/remote-vault'
 import type { Vault } from '../secrets/vault'
@@ -48,6 +49,7 @@ export function resolveMcpInjection(
   userDataDir: string,
   writeConfig = buildMcpConfig,
   headersHelper?: HeadersHelperResolver,
+  endpoints?: EndpointResolver,
 ): McpInjection {
   if (enabledIds.length === 0) return EMPTY
 
@@ -58,6 +60,17 @@ export function resolveMcpInjection(
   for (const id of enabledIds) {
     const connector = getConnector(id)
     if (!connector) continue
+
+    if (isRemoteUrl(connector)) {
+      // Wires in once connected: an address is stored, and a server that asked
+      // for a sign-in also has its OAuth record and the token helper.
+      const ep = endpoints?.(id)
+      const key = remoteVaultKey(id)
+      const signedIn = ep?.auth === 'none' || (ep?.auth === 'oauth' && !!key && vault.has(key) && !!headersHelper)
+      if (!ep || !signedIn) { skippedMissingSecret.push(id); continue }
+      ready.push(id)
+      continue
+    }
 
     if (isRemoteOAuth(connector)) {
       // A remote connector "wires in" only if the user has connected it (an
@@ -88,7 +101,7 @@ export function resolveMcpInjection(
     return { ...EMPTY, skippedMissingSecret }
   }
 
-  const built = writeConfig(ready, workspaceRoot, userDataDir, headersHelper)
+  const built = writeConfig(ready, workspaceRoot, userDataDir, headersHelper, endpoints)
   return {
     env,
     // --strict-mcp-config: use ONLY this config, ignore any project/global

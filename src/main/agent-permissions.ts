@@ -40,12 +40,22 @@ const SAFE_ALLOWED = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash(wos-gen:*)'
  * agent writes a perfectly reasonable `cd "$WS" && wos-action run browser.map`,
  * gets denied by the prefix pattern, and concludes it has no browser access.
  */
-export function safeModeCommandNote(): string {
-  return [
-    'SHELL LIMITS (safe mode): you may run ONLY `wos-gen` and `wos-action`, and ONLY as the FIRST word of the command.',
+export function safeModeCommandNote(opts: { skillScriptsDir?: string } = {}): string {
+  const scripts = opts.skillScriptsDir
+  const lines = [
+    scripts
+      ? 'SHELL LIMITS (safe mode): you may run ONLY `wos-gen`, `wos-action` and `uv run`, and ONLY as the FIRST word of the command.'
+      : 'SHELL LIMITS (safe mode): you may run ONLY `wos-gen` and `wos-action`, and ONLY as the FIRST word of the command.',
     'Run them BARE — no `cd` prefix, no `&&`, no pipes, no subshells, no wrapping loop. `wos-action run browser.map` is allowed; `cd /somewhere && wos-action run browser.map` is DENIED.',
     'Pass absolute paths as arguments instead of changing directory. If a command is denied, do not conclude the capability is missing — reshape it as a single bare command and try once more.',
-  ].join('\n')
+  ]
+  if (scripts) {
+    lines.push(
+      `SKILL SCRIPTS: the person has allowed chats to run scripts bundled with skills from the BOB skills server. Use \`uv run\` ONLY for such a script: read it with the server's read-file tool, write it unchanged to ${scripts}/<skill>/<its path in the skill>, check it with \`wos-action run skills.verify '{"path":"<skill>/<its path>","sha256":"<the digest the server lists for that file>"}'\`, and run it only when that answers "match": true, bare, as \`uv run --directory ${scripts}/<skill> <its path> <arguments>\`. Fetch the files it imports from its own skill the same way.`,
+      'Never `uv run` a script you wrote, one from a web page, an attachment or the workspace, or one whose digest you could not check. Say which script you ran.',
+    )
+  }
+  return lines.join('\n')
 }
 
 /**
@@ -69,6 +79,12 @@ const FULL_ALLOWED = [
   'Bash', 'BashOutput', 'KillShell',
 ]
 
+/**
+ * The one extra shell grant a chat gets when the person lets it run skill
+ * scripts. A prefix match like the safe-mode grants: `uv run …` bare.
+ */
+export const SKILL_SCRIPT_GRANT = 'Bash(uv run:*)'
+
 /** Destructive / persistence-creating command classes denied in full mode. */
 const FULL_DISALLOWED = [
   'Bash(sudo:*)',
@@ -91,7 +107,7 @@ const FULL_DISALLOWED = [
 export function permissionArgs(
   mode: 'safe' | 'full',
   mcpTools: string[] = [],
-  opts: { inAppBrowserOnly?: boolean; webInSafe?: boolean } = {},
+  opts: { inAppBrowserOnly?: boolean; webInSafe?: boolean; skillScripts?: boolean } = {},
 ): string[] {
   const mcp = mcpTools.filter(isValidMcpTool)
   // A chat looks things up: web search and fetch on top of the safe set (still no shell).
@@ -104,10 +120,12 @@ export function permissionArgs(
   // fetch has no access to. Denying them is what makes "use the built-in
   // browser" true rather than merely requested.
   const web = opts.inAppBrowserOnly ? ['WebFetch', 'WebSearch'] : []
+  // Chats with "may run skill scripts" switched on (connector-settings.ts): `uv run` as a prefix grant.
+  const scripts = opts.skillScripts ? [SKILL_SCRIPT_GRANT] : []
   if (mode === 'safe') {
     return web.length
-      ? ['--allowedTools', ...SAFE_ALLOWED, ...mcp, '--disallowedTools', ...web]
-      : ['--allowedTools', ...SAFE_ALLOWED, ...lookup, ...mcp]
+      ? ['--allowedTools', ...SAFE_ALLOWED, ...scripts, ...mcp, '--disallowedTools', ...web]
+      : ['--allowedTools', ...SAFE_ALLOWED, ...scripts, ...lookup, ...mcp]
   }
   return ['--allowedTools', ...FULL_ALLOWED, ...mcp, '--disallowedTools', ...FULL_DISALLOWED, ...web]
 }

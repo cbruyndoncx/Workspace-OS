@@ -180,6 +180,8 @@ export const IPC = {
   MCP_OAUTH_CONNECT: 'mcp:oauth-connect',
   MCP_OAUTH_STATUS: 'mcp:oauth-status',
   MCP_OAUTH_DISCONNECT: 'mcp:oauth-disconnect',
+  MCP_URL_CONNECT: 'mcp:url-connect',
+  MCP_CHAT_SCRIPTS: 'mcp:chat-scripts',
 
   // Search index
   SEARCH_QUERY: 'search:query',

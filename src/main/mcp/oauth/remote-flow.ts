@@ -5,6 +5,7 @@ import {
   buildAuthUrl,
   discoverEndpoints,
   exchangeCode,
+  registerClient,
   type OAuthEndpoints,
   type OAuthFetch,
   type RemoteTokenSet,
@@ -20,13 +21,17 @@ import type { RemoteOAuthConfig } from '../connectors'
  */
 
 export type RemoteFlowResult =
-  | { ok: true; tokens: RemoteTokenSet; endpoints: OAuthEndpoints }
+  | { ok: true; tokens: RemoteTokenSet; endpoints: OAuthEndpoints; clientId: string }
   | { ok: false; error: string }
 
 export interface RemoteFlowDeps {
   fetchFn: OAuthFetch
-  /** Public OAuth client id (from env/config). */
-  clientId: string
+  /**
+   * Public OAuth client id (from env/config). Unset: register one when the
+   * connector allows dynamic registration and the server offers it, else the
+   * generic 'workspace-os' id.
+   */
+  clientId?: string
   openExternal?: (url: string) => Promise<void>
   timeoutMs?: number
 }
@@ -81,9 +86,17 @@ export async function runRemoteOAuthFlow(
       deps.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     )
 
+    let clientId = deps.clientId
+    if (!clientId && remote.dynamicRegistration && endpoints.registrationEndpoint) {
+      const reg = await registerClient(endpoints.registrationEndpoint, redirectUri, deps.fetchFn)
+      if (!reg.ok) return { ok: false, error: reg.error }
+      clientId = reg.value
+    }
+    clientId ??= 'workspace-os'
+
     const authUrl = buildAuthUrl({
       authorizationEndpoint: endpoints.authorizationEndpoint,
-      clientId: deps.clientId,
+      clientId,
       redirectUri,
       codeChallenge: challenge,
       state,
@@ -100,14 +113,14 @@ export async function runRemoteOAuthFlow(
         tokenEndpoint: endpoints.tokenEndpoint,
         code: codeRes.code,
         verifier,
-        clientId: deps.clientId,
+        clientId,
         redirectUri,
         resource: endpoints.resource,
       },
       deps.fetchFn,
     )
     if (!tokens.ok) return { ok: false, error: tokens.error }
-    return { ok: true, tokens: tokens.value, endpoints }
+    return { ok: true, tokens: tokens.value, endpoints, clientId }
   } catch {
     return { ok: false, error: 'Sign-in could not be started.' }
   } finally {

@@ -130,3 +130,49 @@ describe('sites and ordering', () => {
     expect(connectionLine(list[1])).toBe('')
   })
 })
+
+describe('server-address connectors (BOB skills)', () => {
+  const base = { id: 'bob_skills', displayName: 'BOB skills', description: 'Skills', remote: false, secrets: [] }
+  const addr = (url: string | null, auth: 'none' | 'oauth' | null, chatScripts: boolean | null = false) => ({ url, auth, placeholder: 'https://…/mcp', hint: 'h', chatScripts })
+
+  it('needs an address first, then is connected without a sign-in, or off', () => {
+    const list = buildConnections(
+      input({
+        mcp: [
+          { ...base, id: 'a', enabled: false, oauth: 'none', address: addr(null, null) },
+          { ...base, id: 'b', enabled: true, oauth: 'none', address: addr('http://127.0.0.1:3939/mcp', 'none') },
+          { ...base, id: 'c', enabled: false, oauth: 'none', address: addr('http://127.0.0.1:3939/mcp', 'none') },
+        ],
+      }),
+    )
+    const by = Object.fromEntries(list.map((c) => [c.id, c]))
+    expect(by['mcp:a'].status).toBe('setup')
+    expect(by['mcp:a'].detail).toBe('needs the server address')
+    expect(by['mcp:b'].status).toBe('connected')
+    expect(by['mcp:b'].detail).toBe('127.0.0.1:3939')
+    expect(by['mcp:b'].how).toBe('server address · no sign-in')
+    expect(by['mcp:c'].status).toBe('off')
+  })
+
+  it('a signed-in server follows its sign-in probe', () => {
+    const list = buildConnections(
+      input({
+        mcp: [
+          { ...base, id: 'ok', enabled: true, oauth: 'ok', address: addr('https://bob.example/mcp', 'oauth') },
+          { ...base, id: 'bad', enabled: true, oauth: 'fail', address: addr('https://bob.example/mcp', 'oauth') },
+          { ...base, id: 'gone', enabled: true, oauth: 'none', address: addr('https://bob.example/mcp', 'oauth') },
+        ],
+      }),
+    )
+    const by = Object.fromEntries(list.map((c) => [c.id, c]))
+    expect(by['mcp:ok'].status).toBe('connected')
+    expect(by['mcp:ok'].how).toBe('oauth · system browser')
+    expect(by['mcp:bad'].status).toBe('needs-signin')
+    expect(by['mcp:gone'].status).toBe('needs-signin')
+  })
+
+  it('hands the renderer the address and the chat-scripts switch, never a token', () => {
+    const [c] = buildConnections(input({ mcp: [{ ...base, enabled: true, oauth: 'ok', address: addr('https://bob.example/mcp', 'oauth', true) }] }))
+    expect(c.source).toMatchObject({ type: 'mcp', address: { url: 'https://bob.example/mcp', chatScripts: true } })
+  })
+})

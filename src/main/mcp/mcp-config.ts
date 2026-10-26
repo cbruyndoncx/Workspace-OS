@@ -4,9 +4,11 @@ import {
   CONNECTORS,
   getConnector,
   isRemoteOAuth,
+  isRemoteUrl,
   toolPrefix,
   type Connector,
 } from './connectors'
+import type { EndpointResolver } from './connector-settings'
 
 /**
  * Generates the `.mcp.json` Claude Code reads via `--mcp-config`.
@@ -35,11 +37,12 @@ interface StdioServerEntry {
  * absolute command the CLI runs at connect time to obtain auth headers; we
  * point it at our wos-mcp-token, which mints a fresh bearer from the vault. NO
  * token is ever written here — only the helper PATH (+ the connector id arg).
+ * A remote-url connector whose server needs no sign-in has no helper.
  */
 interface HttpServerEntry {
   type: 'http'
   url: string
-  headersHelper: string
+  headersHelper?: string
 }
 
 type McpServerEntry = StdioServerEntry | HttpServerEntry
@@ -78,6 +81,7 @@ export function buildMcpConfigObject(
   enabledIds: string[],
   workspaceRoot: string,
   headersHelper?: HeadersHelperResolver,
+  endpoints?: EndpointResolver,
 ): { config: McpConfigObject; allowTools: string[]; enabled: string[] } {
   const mcpServers: Record<string, McpServerEntry> = {}
   const allowTools: string[] = []
@@ -86,6 +90,21 @@ export function buildMcpConfigObject(
   for (const id of enabledIds) {
     const connector = getConnector(id)
     if (!connector) continue
+
+    if (isRemoteUrl(connector)) {
+      // The person's server address; a signed-in one also gets the token helper.
+      const ep = endpoints?.(id)
+      if (!ep) continue
+      if (ep.auth === 'oauth') {
+        if (!headersHelper) continue
+        mcpServers[id] = { type: 'http', url: ep.url, headersHelper: headersHelper(id) }
+      } else {
+        mcpServers[id] = { type: 'http', url: ep.url }
+      }
+      allowTools.push(toolPrefix(id))
+      enabled.push(id)
+      continue
+    }
 
     if (isRemoteOAuth(connector)) {
       // A remote connector needs a resolvable headersHelper AND a url. Without
@@ -129,8 +148,9 @@ export function buildMcpConfig(
   workspaceRoot: string,
   userDataDir: string,
   headersHelper?: HeadersHelperResolver,
+  endpoints?: EndpointResolver,
 ): BuiltMcpConfig {
-  const { config, allowTools, enabled } = buildMcpConfigObject(enabledIds, workspaceRoot, headersHelper)
+  const { config, allowTools, enabled } = buildMcpConfigObject(enabledIds, workspaceRoot, headersHelper, endpoints)
   const outPath = path.join(userDataDir, '.mcp.json')
   fs.mkdirSync(userDataDir, { recursive: true })
   fs.writeFileSync(outPath, JSON.stringify(config, null, 2), { encoding: 'utf-8', mode: 0o600 })

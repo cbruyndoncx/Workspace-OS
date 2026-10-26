@@ -31,8 +31,18 @@ export interface ConnectionSecretView {
   stored: boolean
 }
 
+/** A connector whose server address the person sets (kind 'remote-url'). */
+export interface ConnectionAddressView {
+  /** The stored address; null until connected. */
+  url: string | null
+  placeholder: string
+  hint: string
+  /** Chats may run the server's skill scripts; null when the connector has no such switch. */
+  chatScripts: boolean | null
+}
+
 export type ConnectionSource =
-  | { type: 'mcp'; connectorId: string; remote: boolean; enabled: boolean; secrets: ConnectionSecretView[] }
+  | { type: 'mcp'; connectorId: string; remote: boolean; enabled: boolean; secrets: ConnectionSecretView[]; address?: ConnectionAddressView }
   | { type: 'site'; domain: string }
   | { type: 'mail'; accountId: string }
   | { type: 'calendar'; sourceId: string }
@@ -65,6 +75,8 @@ export interface ConnectionInputs {
     secrets: ConnectionSecretView[]
     /** Remote connectors only: no record / record stored and probe ok / probe failed. */
     oauth: 'none' | 'ok' | 'fail'
+    /** Address connectors only (kind 'remote-url'): the stored server and how it signs in. */
+    address?: { url: string | null; auth: 'none' | 'oauth' | null; placeholder: string; hint: string; chatScripts: boolean | null }
   }[]
   sites: { domain: string; label: string; session: boolean }[]
   mail: {
@@ -82,6 +94,16 @@ export interface ConnectionInputs {
 }
 
 const OAUTH = 'oauth · system browser'
+const NO_SIGNIN = 'server address · no sign-in'
+
+/** The host of a server address, for the row's detail line. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
 const KEYCHAIN_PASSWORD = 'password · keychain'
 
 function providerName(p: 'google' | 'microsoft' | undefined): string {
@@ -105,6 +127,37 @@ export function buildConnections(input: ConnectionInputs): Connection[] {
       remote: c.remote,
       enabled: c.enabled,
       secrets: c.secrets,
+    }
+    if (c.address) {
+      const a = c.address
+      source.address = { url: a.url, placeholder: a.placeholder, hint: a.hint, chatScripts: a.chatScripts }
+      let status: ConnectionStatus
+      let detail = a.url ? hostOf(a.url) : ''
+      if (!a.url || !a.auth) {
+        status = 'setup'
+        detail = 'needs the server address'
+      } else if (!c.enabled) status = 'off'
+      else if (a.auth === 'none' || c.oauth === 'ok') status = 'connected'
+      else if (c.oauth === 'fail') {
+        status = 'needs-signin'
+        detail = 'the sign-in could not be renewed'
+      } else {
+        status = 'needs-signin'
+        detail = 'not signed in'
+      }
+      out.push({
+        id: `mcp:${c.id}`,
+        name: c.displayName,
+        kind: a.auth === 'oauth' ? 'oauth' : 'token',
+        how: a.auth === 'oauth' ? OAUTH : NO_SIGNIN,
+        gives: c.description,
+        status,
+        detail,
+        group: 'services',
+        source,
+        checkedAt: at,
+      })
+      continue
     }
     let status: ConnectionStatus
     let detail = ''

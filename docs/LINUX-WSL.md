@@ -143,7 +143,8 @@ non-interactive, so an MCP server's tools need an allow entry in the folder's `.
 
 The app builder and the internal one-shot jobs (Agent Foundry, app briefs and tests, mail helpers)
 always run without hooks. When an app connector is enabled, the run uses a strict MCP config and the
-user's servers are not re-added.
+user's servers are not re-added. For BOB skills, the **BOB skills** connector needs neither the trust
+prompt nor allow entries and works alongside the other connectors; see [BOB-SKILLS.md](BOB-SKILLS.md).
 
 ## Other notes
 

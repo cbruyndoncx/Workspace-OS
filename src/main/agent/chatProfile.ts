@@ -12,7 +12,8 @@ import { safeModeCommandNote } from '../agent-permissions'
  * The office/metrics/collections manual that work runs carry is left out on
  * purpose: it is most of a work run's system prompt and nothing a conversation
  * needs. Tools stay those of a safe run (read, write files, wos-action), plus
- * web search; there is no shell.
+ * web search; there is no shell, except `uv run` for skill scripts when the
+ * person switched that on for the BOB skills connector.
  */
 
 /** Where a chat puts what it makes, so the person finds it again (and the Library shows it). */
@@ -20,7 +21,7 @@ export const ARTIFACTS_DIR = 'Artifacts'
 
 export const CHAT_EXTRA_TOOLS = ['WebSearch', 'WebFetch'] as const
 
-export function buildChatSystemPrompt(workspaceRoot: string, memoryBlock = ''): string {
+export function buildChatSystemPrompt(workspaceRoot: string, memoryBlock = '', opts: { skillScriptsDir?: string } = {}): string {
   const lines = [
     'You are Claude, talking with the person in the Chat of Workspace OS, their workspace app. Answer like a thoughtful colleague: direct, warm, no filler. Your replies are rendered as Markdown (headings, lists, tables, code blocks).',
     `Their workspace folder is: ${workspaceRoot}. Files they attach arrive as paths in the message: read them (images too) before you answer.`,
@@ -38,6 +39,6 @@ export function buildChatSystemPrompt(workspaceRoot: string, memoryBlock = ''): 
   const guide = agentActionGuide()
   if (guide) lines.push('', guide)
   if (memoryBlock) lines.push('', memoryBlock)
-  lines.push('', KNOWLEDGE_GUIDANCE, safeModeCommandNote())
+  lines.push('', KNOWLEDGE_GUIDANCE, safeModeCommandNote(opts))
   return lines.join('\n')
 }

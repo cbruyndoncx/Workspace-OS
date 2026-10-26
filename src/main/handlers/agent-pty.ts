@@ -18,7 +18,7 @@ import { readAgentForRun } from './agents'
 import { grants, AGENT_TOKEN_ENV } from '../agent/grants'
 import { agentSockPath, AGENT_SOCK_ENV } from '../agent/actionBridge'
 import fs from 'fs'
-import { getVault, getConnectorState } from '../secrets'
+import { getVault, getConnectorState, getConnectorSettings } from '../secrets'
 import { resolveMcpInjection } from '../mcp/mcp-runtime'
 import { headersHelperCommand } from '../install-mcp-token-cli'
 import { isValidMcpTool } from '../agent-permissions'
@@ -116,6 +116,7 @@ export function registerAgentPtyHandlers(ipcMain: IpcMain, win: BrowserWindow): 
         app.getPath('userData'),
         undefined,
         headersHelperCommand,
+        getConnectorSettings().resolver(),
       )
       Object.assign(ptyEnv, injection.env)
       const mcpTools = injection.allowTools.filter(isValidMcpTool)
