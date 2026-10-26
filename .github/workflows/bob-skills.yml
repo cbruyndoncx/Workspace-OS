@@ -87,6 +87,10 @@ jobs:
             node e2e/bob-connector.mjs "$APP_EXE"
           fi
 
+      - name: "E2E: window style (Linux; macOS keeps its own window)"
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node e2e/window-style.mjs "$APP_EXE"
+
       - name: Zip the macOS test app
         if: runner.os == 'macOS'
         run: |
@@ -103,5 +107,6 @@ jobs:
           path: |
             unit-tests.log
             e2e/shots-bob-connector/*.png
+            e2e/shots-window-style/*.png
             ${{ runner.temp }}/skills-mcp.log
             ${{ runner.temp }}/Workspace-OS-bob-skills-macos-arm64-unsigned.zip
