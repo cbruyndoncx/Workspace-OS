@@ -156,6 +156,10 @@ export async function discoverEndpoints(
 
 // ── Server probe ─────────────────────────────────────────────────────────────
 
+/** What a probe that ran out of time says: the usual cause is a server waking from sleep. */
+export const PROBE_TIMEOUT_MESSAGE =
+  'The server did not answer in time. A server that sleeps when idle (such as one on Render\'s free plan) can take a minute or more to wake; try again.'
+
 /**
  * Whether an MCP server answers without a sign-in: an `initialize` request
  * that succeeds means 'open'; a 401 means it wants OAuth ('auth'). Anything
@@ -177,7 +181,8 @@ export async function probeMcpServer(
         params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'workspace-os', version: '1' } },
       }),
     })
-  } catch {
+  } catch (err) {
+    if ((err as { name?: string } | null)?.name === 'TimeoutError') return fail(PROBE_TIMEOUT_MESSAGE)
     return fail('Could not reach the server at that address.')
   }
   if (res.ok) return ok('open')

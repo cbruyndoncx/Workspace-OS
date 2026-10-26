@@ -7,6 +7,10 @@ import { getVault, getConnectorState, getConnectorSettings } from '../secrets'
 import { isValidSecretName } from '../secrets/vault'
 import { CONNECTORS, getConnector, isConnectorId, isRemoteOAuth, isRemoteUrl, requiredSecretNames, type Connector } from '../mcp/connectors'
 import { normalizeServerUrl } from '../mcp/connector-settings'
+import { fetchWithTimeout } from '../mcp/warmup'
+
+/** How long Connect waits for a server to answer (a sleeping one has to wake first). */
+const CONNECT_TIMEOUT_MS = 120_000
 import { runRemoteOAuthFlow, type RemoteFlowDeps } from '../mcp/oauth/remote-flow'
 import { remoteVaultKey, serializeRecord } from '../mcp/oauth/remote-vault'
 import { probeMcpServer, type OAuthFetch } from '../mcp/oauth/remote-oauth'
@@ -203,7 +207,8 @@ export function registerSecretsHandlers(ipcMain: IpcMain): void {
     if (!connector || !isRemoteUrl(connector)) return { ok: false as const, error: 'This connector has no address to set.' }
     const norm = normalizeServerUrl(url)
     if (!norm.ok) return { ok: false as const, error: norm.error }
-    const probe = await probeMcpServer(norm.url, nodeFetch)
+    // A server that sleeps when idle (Render's free plan) may need a minute or more to answer.
+    const probe = await probeMcpServer(norm.url, fetchWithTimeout(CONNECT_TIMEOUT_MS))
     if (!probe.ok) return { ok: false as const, error: probe.error }
     const key = remoteVaultKey(id)
     if (probe.value === 'open') {

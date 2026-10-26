@@ -32,6 +32,24 @@ A Windows app can reach a skills server running in WSL at `http://127.0.0.1:3939
 
 The agent's tools are `mcp__bob_skills__…`, for example `mcp__bob_skills__bob_search_skills`.
 
+## A server that sleeps
+
+A server on a host that stops it when idle answers its first request only once it has started again,
+which can take a minute or more. The hosted BOB server runs on Render, where a free-plan service stops
+after 15 minutes without requests. Workspace OS allows for that:
+
+- **Connect** waits up to two minutes and says it is waking the server; if the server still does not
+  answer, the row says so, and trying again usually works.
+- **At start-up** the app sends the server one request in the background, so it is usually awake by
+  the first run.
+- **Before each chat or case** with the connector in it, the app wakes the server first and shows
+  "[BOB skills] waking the server…" when that takes more than a few seconds. Claude Code then gets 90
+  seconds to connect (`MCP_TIMEOUT=90000`, unless you set `MCP_TIMEOUT` yourself). A server that does
+  not answer within 90 seconds is reported, and the run starts without it.
+
+The app sends no keep-alive requests: keeping a free-plan server awake around the clock uses up the
+plan's hours. A paid Render plan keeps the server running.
+
 ## Chats and cases
 
 Both run Claude Code in the workspace folder and start from a Git checkpoint you can revert to. They
@@ -94,4 +112,5 @@ and claude.ai connectors are then not loaded. Switch the connector off to use th
 | `src/main/handlers/secrets.ts` | `mcp:url-connect` and `mcp:chat-scripts` |
 | `src/main/agent-permissions.ts`, `src/main/agent/chatProfile.ts` | The `uv run` grant and the chat instructions |
 | `src/main/agent/skillScripts.ts` | The `skills.verify` action |
+| `src/main/mcp/warmup.ts` | Waking a sleeping server at start-up and before each run |
 | `e2e/bob-connector.mjs`, `.github/workflows/bob-skills.yml` | The connector driven on a packaged app, in CI on macOS and Linux |

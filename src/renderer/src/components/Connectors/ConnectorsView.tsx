@@ -373,6 +373,11 @@ function AddressPanel({
           </button>
         </div>
         <p className={styles.hint}>{address.hint}</p>
+        {busy && (
+          <p className={styles.hint} role="status" data-testid="connector-address-waking">
+            Connecting… A server that sleeps when idle can take a minute or more to wake.
+          </p>
+        )}
       </div>
       {address.chatScripts !== null && address.url && (
         <div className={styles.key}>

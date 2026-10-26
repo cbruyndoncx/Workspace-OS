@@ -25,6 +25,7 @@ import { extractActivity, type AgentActivity } from '../handlers/agent-activity'
 import { snapshotArtifacts, changedArtifacts, type Artifact } from '../artifacts'
 import { getVault, getConnectorState, getConnectorSettings } from '../secrets'
 import { getConnector } from '../mcp/connectors'
+import { addressServers, fetchWithTimeout, MCP_CONNECT_TIMEOUT_MS, warmUp, WARMUP_TIMEOUT_MS } from '../mcp/warmup'
 import { resolveMcpInjection } from '../mcp/mcp-runtime'
 import { headersHelperCommand } from '../install-mcp-token-cli'
 import { agentSockPath, AGENT_SOCK_ENV, invokeGrantedAction } from './actionBridge'
@@ -244,6 +245,17 @@ export async function launchRun(o: LaunchRunOptions): Promise<{ child: ChildProc
       mcpArgs = []
       mcpAllowTools = []
       mcpWired = []
+    }
+
+    // A server-address connector may sleep when idle: wake it before the run
+    // starts, and give Claude Code longer to connect, so its tools are there.
+    const sleepers = addressServers(mcpWired, endpoints)
+    if (sleepers.length) {
+      childEnv['MCP_TIMEOUT'] ??= String(MCP_CONNECT_TIMEOUT_MS)
+      const woke = await warmUp(sleepers, fetchWithTimeout(WARMUP_TIMEOUT_MS), {
+        onSlow: (name) => sink.output(`\x1b[2m[${name}] waking the server…\x1b[0m\n`),
+      })
+      for (const w of woke) if (!w.ok) sink.output(`\x1b[2m[${w.name}] ${w.error ?? 'did not answer'} The run starts without it.\x1b[0m\n`)
     }
 
     // A chat may run skill scripts (`uv run`) only when a wired-in skills

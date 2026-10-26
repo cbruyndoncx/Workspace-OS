@@ -19,6 +19,7 @@ import { grants, AGENT_TOKEN_ENV } from '../agent/grants'
 import { agentSockPath, AGENT_SOCK_ENV } from '../agent/actionBridge'
 import fs from 'fs'
 import { getVault, getConnectorState, getConnectorSettings } from '../secrets'
+import { addressServers, MCP_CONNECT_TIMEOUT_MS } from '../mcp/warmup'
 import { resolveMcpInjection } from '../mcp/mcp-runtime'
 import { headersHelperCommand } from '../install-mcp-token-cli'
 import { isValidMcpTool } from '../agent-permissions'
@@ -119,6 +120,8 @@ export function registerAgentPtyHandlers(ipcMain: IpcMain, win: BrowserWindow): 
         getConnectorSettings().resolver(),
       )
       Object.assign(ptyEnv, injection.env)
+      // A server-address connector may be waking from sleep: give it time to connect.
+      if (addressServers(injection.wired, getConnectorSettings().resolver()).length) ptyEnv['MCP_TIMEOUT'] ??= String(MCP_CONNECT_TIMEOUT_MS)
       const mcpTools = injection.allowTools.filter(isValidMcpTool)
       if (injection.args.length > 0) {
         mcpArgs = [...injection.args, ...(mcpTools.length ? ['--allowedTools', ...mcpTools] : [])]

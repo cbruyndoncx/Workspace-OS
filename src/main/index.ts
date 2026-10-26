@@ -63,6 +63,8 @@ import { hardwareAcceleration } from './host-profile'
 import { windowChrome } from './window-chrome'
 import { windowStyle } from './host-profile'
 import { registerWindowHandlers, setWindowFrameStyle } from './handlers/window'
+import { addressServers, fetchWithTimeout, warmUp, WARMUP_TIMEOUT_MS } from './mcp/warmup'
+import { getConnectorState, getConnectorSettings } from './secrets'
 
 // electron-vite sets ELECTRON_RENDERER_URL only when the dev server is running.
 // Keying off it (not app.isPackaged) lets the built app load its bundled
@@ -278,6 +280,17 @@ app.whenReady().then(() => {
   })
   ipcHandle(ipcMain, IPC.WINDOW_CLOSE, () => mainWindow()?.close())
   registerWindowHandlers(ipcMain)
+
+  // Wake any server-address connector (BOB skills) now, in the background, so a
+  // server that sleeps when idle is up by the time the first run needs it.
+  void (async () => {
+    try {
+      const servers = addressServers(getConnectorState().enabled(), getConnectorSettings().resolver())
+      if (servers.length) await warmUp(servers, fetchWithTimeout(WARMUP_TIMEOUT_MS))
+    } catch {
+      /* best-effort: a run wakes it again */
+    }
+  })()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
