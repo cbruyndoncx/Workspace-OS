@@ -339,6 +339,9 @@ function AddressPanel({
 }): JSX.Element {
   const value = draft ?? address.url ?? ''
   const changed = value.trim() !== (address.url ?? '')
+  // Show the switch's new state at once; the next roster read confirms (or reverts) it.
+  const [scriptsOn, setScriptsOn] = useState(address.chatScripts === true)
+  useEffect(() => setScriptsOn(address.chatScripts === true), [address.chatScripts])
   return (
     <>
       <div className={styles.key}>
@@ -376,9 +379,12 @@ function AddressPanel({
           <label className={styles.keyLabel}>
             <input
               type="checkbox"
-              checked={address.chatScripts}
+              checked={scriptsOn}
               disabled={busy}
-              onChange={(e) => onChatScripts(connectorId, e.target.checked)}
+              onChange={(e) => {
+                setScriptsOn(e.target.checked)
+                onChatScripts(connectorId, e.target.checked)
+              }}
               data-testid="connector-chat-scripts"
             />{' '}
             Chats may run skill scripts

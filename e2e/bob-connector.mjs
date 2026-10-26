@@ -81,8 +81,9 @@ try {
   if (!(await row.locator('[data-testid="connector-chat-scripts"]').count())) await row.locator('button[aria-expanded]').click()
   const box = row.locator('[data-testid="connector-chat-scripts"]')
   check((await box.count()) === 1 && !(await box.isChecked()), 'chat scripts switch is there and off')
-  await box.check()
-  for (let i = 0; i < 20 && settings().bob_skills?.chatScripts !== true; i++) await sleep(300)
+  await box.click()
+  for (let i = 0; i < 40 && settings().bob_skills?.chatScripts !== true; i++) await sleep(300)
+  check(await box.isChecked(), 'the switch shows as on')
   check(settings().bob_skills?.chatScripts === true, 'switching chat scripts on is stored')
   await shot('3-scripts-on')
 
