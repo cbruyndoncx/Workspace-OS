@@ -22,6 +22,11 @@ table only grows. Nothing is bundled: the app loads `/usr/lib/libreoffice/progra
 Run `release/linux-unpacked/workspace-os`. The AppImage needs `libfuse2`; without it, run it with
 `--appimage-extract-and-run`.
 
+On the WSL development host the build is started with the `wos` launcher (`~/.local/bin/wos`, not
+in this repo). It runs `release/linux-unpacked/workspace-os` with `GDK_SCALE=1 GDK_DPI_SCALE=1`,
+detached with `nohup … & disown`, and passes its arguments through. It starts whichever branch was
+built last into `release/linux-unpacked/`, so rebuild before testing another branch.
+
 ## Host settings
 
 Each setting resolves in this order: environment variable, then `<userData>/host-settings.json`
@@ -165,3 +170,9 @@ prompt nor allow entries and works alongside the other connectors; see [BOB-SKIL
   refuses to store them.
 - `e2e/lok-packaged-linux.mjs` checks the packaged app renders `.docx`, `.xlsx` and `.csv` from the
   system engine.
+- **WSLg itself can get stuck**: empty frames that will not close, no app process in `ps`, and even
+  `xclock` never appears. The app is not at fault; `wsl --shutdown` (which also ends any session
+  running in WSL) or a reboot fixes it. Check `ps` and try `xclock` before debugging the app.
+- **`[bisect]` in a commit message** (Windows CI, `.github/workflows/windows.yml`): the build and test
+  jobs are skipped and the 300-minute bibisect job starts instead. If such a commit is pushed by
+  accident, cancel the run.
