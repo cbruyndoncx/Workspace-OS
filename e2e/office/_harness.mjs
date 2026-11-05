@@ -21,6 +21,16 @@ const ENGINE = process.env.WOS_SUITE_ENGINE === 'bundled'
 export const SHOTS = path.join(__dirname, 'shots')
 export const TESTROOT = '/tmp/wos-test'
 
+// The shared office fixtures scripts copy from TESTROOT. /tmp is wiped on
+// reboot, so they are seeded from the repo whenever a script loads the harness.
+for (const f of ['test-sheet.xlsx', 'test-deck.pptx', 'test-document.docx']) {
+  const dst = path.join(TESTROOT, f)
+  if (!fs.existsSync(dst)) {
+    fs.mkdirSync(TESTROOT, { recursive: true })
+    fs.copyFileSync(path.join(__dirname, 'fixtures', f), dst)
+  }
+}
+
 export function enginePresent() {
   return fs.existsSync(path.join(ROOT, 'scripts/lok/wos-lok-host')) && fs.existsSync(ENGINE + '/Resources/fundamentalrc')
 }
@@ -49,8 +59,11 @@ export async function killAll() {
 }
 
 /** Launches the dev build with the engine wired in. Returns { app, win }.
- * Retries once if the window never appears (single-instance quit / slow boot). */
-export async function launch() {
+ * Retries once if the window never appears (single-instance quit / slow boot).
+ * Starts without the previous script's stage session (the documents the app
+ * reopens on launch), unless `keepSession` — every script shares one profile,
+ * so they would pile up and load into the engine on every launch. */
+export async function launch({ keepSession = false } = {}) {
   await killAll()
   // Clear stale LibreOffice locks left by hard-killed hosts. The profile lock
   // makes the engine boot read-only; a per-document `.~lock.<file>#` makes a
@@ -84,12 +97,19 @@ export async function launch() {
       win.on('pageerror', (e) => console.log(`  [pageerror] ${e.message}`))
       await win.waitForSelector('#root', { timeout: 20000 })
       await win.waitForTimeout(600)
-      // The startup splash intercepts pointer events until dismissed; Enter lets
-      // us in (a click would also do, but Enter cannot land on anything else).
-      for (let i = 0; i < 20 && await win.locator('[class*=splash]').first().isVisible().catch(() => false); i++) {
-        await win.keyboard.press('Enter')
-        await win.waitForTimeout(300)
+      if (!keepSession) {
+        const cleared = await win.evaluate(() => {
+          const keys = Object.keys(localStorage).filter((k) => k.startsWith('workspace-os:stage-session'))
+          keys.forEach((k) => localStorage.removeItem(k))
+          return keys.length
+        })
+        if (cleared) {
+          await win.reload()
+          await win.waitForSelector('#root', { timeout: 20000 })
+          await win.waitForTimeout(600)
+        }
       }
+      await dismissSplash(win)
       return { app, win }
     } catch (e) {
       lastErr = e
@@ -99,6 +119,21 @@ export async function launch() {
     }
   }
   throw new Error(`launch failed after 2 attempts: ${lastErr?.message ?? lastErr}`)
+}
+
+/**
+ * Gets past the startup splash, which intercepts pointer events until it is
+ * dismissed. Enter lets us in (a click would also do, but Enter cannot land on
+ * anything else). The splash can mount a moment after #root, so wait for it to
+ * show before deciding there is none: a late splash once covered every click.
+ */
+export async function dismissSplash(win, { wait = 4000 } = {}) {
+  const splash = win.locator('[class*=splash]').first()
+  if (wait > 0) await splash.waitFor({ state: 'visible', timeout: wait }).catch(() => {})
+  for (let i = 0; i < 20 && await splash.isVisible().catch(() => false); i++) {
+    await win.keyboard.press('Enter')
+    await win.waitForTimeout(300)
+  }
 }
 
 /** Doc-type-specific ribbon tab — a reliable signal that the *right* document
@@ -133,17 +168,32 @@ export async function waitRender(win, expectTab) {
 
 const KIND_EXT = { Word: 'docx', Excel: 'xlsx', PowerPoint: 'pptx' }
 
+/** Opens a stage surface the way a person does: the dock's Menu, then the surface. */
+export async function openSurface(win, rail) {
+  await win.locator('[data-stage-dock="menu"]:visible, [data-dock="menu"]:visible').first().click()
+  await win.locator(`[data-menu="${rail}"]`).first().click()
+  await win.waitForTimeout(400)
+}
+
+/** Opens a case in the landscape's Cases view; returns the open case's panel. */
+export async function openCase(win, caseId) {
+  await win.locator('[data-stage-dock="cases"]:visible, [data-dock="cases"]:visible').first().click()
+  await win.locator(`[data-case="${caseId}"]`).first().click()
+  const open = win.locator(`[data-testid="case-open"][data-case="${caseId}"]`)
+  await open.waitFor()
+  return open
+}
+
 /** Creates a fresh document via the New-document menu; returns its file path. */
 export async function newDoc(win, kind) {
   // remove any prior generated file of this base so the name is deterministic
   const base = { Word: 'New Document', Excel: 'New Spreadsheet', PowerPoint: 'New Presentation' }[kind]
   for (const f of fs.readdirSync(TESTROOT)) if (f.startsWith(base)) fs.rmSync(path.join(TESTROOT, f))
-  // New shell: the file panel (with "New document") lives behind the Files rail.
+  // A test that reloads the window gets the splash again; clear one that shows.
+  await dismissSplash(win, { wait: 0 })
+  // The file panel (with "New document") is the Files surface, where the stage opens.
   const newBtn = win.getByRole('button', { name: 'New document', exact: true })
-  if (!(await newBtn.isVisible().catch(() => false))) {
-    const files = win.getByRole('button', { name: 'Files', exact: true }).first()
-    if (await files.isVisible().catch(() => false)) { await files.click(); await win.waitForTimeout(400) }
-  }
+  if (!(await newBtn.isVisible().catch(() => false))) await openSurface(win, 'files')
   await newBtn.click()
   // The menu label differs per kind ("Word document" / "Excel spreadsheet" / "PowerPoint…").
   const primary = win.getByText(`${kind} document`)
@@ -151,13 +201,35 @@ export async function newDoc(win, kind) {
   else await win.getByText(kind === 'Excel' ? 'Excel spreadsheet' : 'PowerPoint').click()
   // Wait for the doc-type-specific tab so we never return on a stale canvas.
   await waitRender(win, KIND_TAB[kind])
-  return path.join(TESTROOT, `${base}.${KIND_EXT[kind]}`)
+  // The app picks the name from its file list, which may not have seen the
+  // deletion above yet ("New Document 2.docx"). Every earlier file of this base
+  // is gone, so the one on disk now is the document just created.
+  const created = await poll(() => fs.readdirSync(TESTROOT).find((f) => f.startsWith(base) && f.endsWith(`.${KIND_EXT[kind]}`)), { timeout: 5000 })
+  return path.join(TESTROOT, created || `${base}.${KIND_EXT[kind]}`)
 }
 
 /** Opens an existing file from the tree. Pass `kind` to assert the doc type loaded. */
 export async function openDoc(win, fileName, kind) {
-  await win.getByText(fileName).first().click()
+  await dismissSplash(win, { wait: 0 })
+  await clickFile(win, fileName)
   await waitRender(win, kind ? KIND_TAB[kind] : undefined)
+}
+
+/** Removes every live link recorded for `file`. Links persist in the app's
+ * data, so a script reusing a file name must start without the last run's. */
+export async function clearLinks(win, file) {
+  await win.evaluate((f) => window.workspace.transclusions.forFile(f).then((ls) =>
+    Promise.all(ls.map((l) => window.workspace.transclusions.remove(l.id)))), file)
+}
+
+/** Clicks a file by name where the person can see it. The same name also sits
+ * on landscape tiles that are not showing, so the first match in the DOM is
+ * often a hidden one; when no visible match exists, Files is opened first. */
+export async function clickFile(win, fileName) {
+  await dismissSplash(win, { wait: 0 })
+  const visible = () => win.getByText(fileName).filter({ visible: true }).first()
+  if (!(await visible().isVisible().catch(() => false))) await openSurface(win, 'files')
+  await visible().click()
 }
 
 /** Polls an async predicate until it returns truthy or the timeout elapses.
